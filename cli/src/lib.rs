@@ -9,6 +9,9 @@ use zecwalletlitelib::{commands, lightclient::LightClient};
 use zecwalletlitelib::{MainNetwork, TestNetwork, Parameters};
 
 pub mod version;
+pub mod config;
+pub mod server;
+pub mod client;
 
 #[macro_export]
 macro_rules! configure_clapapp {
@@ -55,7 +58,7 @@ macro_rules! configure_clapapp {
                 .help("Absolute path to use as data directory")
                 .takes_value(true))
             .arg(Arg::with_name("COMMAND")
-                .help("Command to execute. If a command is not specified, zecwallet-cli will start in interactive mode.")
+                .help("Command to execute. Use 'serve' to start the JSON-RPC daemon. If a command is not specified, zecwallet-cli will start in interactive mode.")
                 .required(false)
                 .index(1))
             .arg(Arg::with_name("PARAMS")
@@ -88,9 +91,24 @@ pub fn startup<P: Parameters + Send + Sync + std::fmt::Debug + 'static>(
     data_dir: Option<String>,
     first_sync: bool,
     print_updates: bool,
+    testnet: bool,
 ) -> io::Result<(Sender<(String, Vec<String>)>, Receiver<String>)> {
     // Try to get the configuration
     let (config, latest_block_height) = LightClientConfig::create(params, server.clone(), data_dir)?;
+
+    // Validate that the server's chain matches the requested network.
+    let server_is_testnet = !matches!(config.chain_name.as_str(), "zs" | "main");
+    if testnet != server_is_testnet {
+        let requested = if testnet { "testnet" } else { "mainnet" };
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Network mismatch: you requested '{}' but the server reports chain '{}'. \
+                Check the 'testnet' setting in your config and the --server URL.",
+                requested, config.chain_name
+            ),
+        ));
+    }
     
     let lightclient = match seed {
         Some(phrase) => Arc::new(LightClient::new_from_phrase(phrase, &config, birthday, false)?),
@@ -241,6 +259,34 @@ pub fn command_loop<P: Parameters + Send + Sync + 'static>(
     });
 
     (command_tx, resp_rx)
+}
+
+/// Execute commands that need no wallet or server connection.
+/// Returns Some(output) if handled locally, None if the command needs a wallet.
+pub fn local_command(cmd: &str, args: &[&str]) -> Option<String> {
+    match cmd.to_ascii_lowercase().as_str() {
+        "help" => {
+            let cmds = commands::get_commands::<MainNetwork>();
+            let output = match args.len() {
+                0 => {
+                    let mut lines = vec!["Available commands:".to_string()];
+                    let mut sorted: Vec<_> = cmds.iter().collect();
+                    sorted.sort_by_key(|(k, _)| k.as_str());
+                    for (name, obj) in sorted {
+                        lines.push(format!("{} - {}", name, obj.short_help()));
+                    }
+                    lines.join("\n")
+                }
+                1 => match cmds.get(args[0]) {
+                    Some(obj) => obj.help(),
+                    None => format!("Command {} not found. Type 'help' for a list of commands.", args[0]),
+                },
+                _ => "Usage: help [command_name]".to_string(),
+            };
+            Some(output)
+        }
+        _ => None,
+    }
 }
 
 pub fn attempt_recover_seed(_password: Option<String>) {

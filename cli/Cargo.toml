@@ -13,6 +13,8 @@ json = "0.12.0"
 http = "0.2"
 byteorder = "1"
 tiny-bip39 = "0.6.2"
+dirs = "3.0.2"
+base64 = "0.13.0"
 
 zecwalletlitelib = { path = "../lib/" }
 

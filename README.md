@@ -5,8 +5,47 @@
 This will launch the interactive prompt. Type `help` to get a list of commands
 
 ## Running in non-interactive mode:
-You can also run `zecwallet-cli` in non-interactive mode by passing the command you want to run as an argument. For example, `zecwallet-cli addresses` will list all wallet addresses and exit. 
-Run `zecwallet-cli help` to see a list of all commands. 
+You can also run `zecwallet-cli` in non-interactive mode by passing the command you want to run as an argument. For example, `zecwallet-cli addresses` will list all wallet addresses and exit.
+Run `zecwallet-cli help` to see a list of all commands.
+
+## Running as a background daemon (JSON-RPC mode)
+
+`zecwallet-cli` can run as a persistent background daemon that holds the wallet in memory, syncs periodically, and exposes a JSON-RPC HTTP API. This avoids re-syncing on every invocation.
+
+**1. Create a config file** at `~/.zcash/zecwallet.conf` (see `zecwallet.conf.example` in this repo):
+
+```
+rpcuser=alice
+rpcpassword=changeme
+rpcport=9068
+sync_interval=60
+```
+
+**2. Start the daemon** (blocks; run in a terminal or as a system service):
+
+```
+./zecwallet-cli serve
+# or for testnet:
+./zecwallet-cli --testnet serve
+```
+
+**3. Use commands normally** in another terminal — they are forwarded to the daemon automatically when `rpcuser`/`rpcpassword` are set in the config:
+
+```
+./zecwallet-cli balance
+./zecwallet-cli addresses
+./zecwallet-cli send <address> <amount> <memo>
+```
+
+**4. Query via curl** (JSON-RPC 2.0):
+
+```
+curl -u alice:changeme http://127.0.0.1:9068/ \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"balance","params":[],"id":1}'
+```
+
+If `rpcuser`/`rpcpassword` are absent from the config, every command falls back to the original direct-execution mode (no daemon needed).
 
 ## Privacy 
 * While all the keys and transaction detection happens on the client, the server can learn what blocks contain your shielded transactions.
@@ -42,13 +81,13 @@ cargo build --release
 ```
 
 ## Options
-Here are some CLI arguments you can pass to `zecwallet-cli`. Please run `zecwallet-cli --help` for the full list. 
+Here are some CLI arguments you can pass to `zecwallet-cli`. Please run `zecwallet-cli --help` for the full list.
 
-* `--server`: Connect to a custom zecwallet lightwalletd server. 
+* `--server`: Connect to a custom zecwallet lightwalletd server.
     * Example: `./zecwallet-cli --server 127.0.0.1:9067`
 * `--seed`: Restore a wallet from a seed phrase. Note that this will fail if there is an existing wallet. Delete (or move) any existing wallet to restore from the 24-word seed phrase
     * Example: `./zecwallet-cli --seed "twenty four words seed phrase"`
- * `--recover`: Attempt to recover the seed phrase from a corrupted wallet
- 
- * `--data-dir`: uses the specified path as data directory.
+* `--recover`: Attempt to recover the seed phrase from a corrupted wallet
+* `--data-dir`: Use the specified path as data directory.
     * Example: `./zecwallet-cli --server 127.0.0.1:9067 --data-dir /Users/ZecWalletRocks/my-test-wallet` will use the provided directory to store `zecwallet-light-wallet.dat` and logs. If the provided directory does not exist, it will create it.
+* `--config`: Path to a config file (default: `~/.zcash/zecwallet.conf`). See `zecwallet.conf.example` for all available options.

@@ -1,0 +1,30 @@
+# zecwallet-cli configuration file
+# Copy to ~/.zcash/zecwallet.conf and edit as needed.
+
+# Lightwalletd server to connect to (optional; overridden by --server flag)
+#server=https://lwdv3.zecwallet.co
+
+# Use testnet instead of mainnet (optional; overridden by --testnet flag)
+#testnet=0
+
+# Wallet and log data directory (optional; overridden by --data-dir flag)
+#datadir=/home/user/.zcash
+
+# --- Daemon / JSON-RPC settings ---
+# When rpcuser and rpcpassword are set, `zecwallet-cli serve` starts an
+# HTTP JSON-RPC daemon, and all other commands (balance, send, …) are
+# forwarded to the running daemon instead of loading the wallet directly.
+
+# Address the RPC server listens on (default: 127.0.0.1)
+#rpcbind=127.0.0.1
+
+# Port the RPC server listens on (default: 9068)
+#rpcport=9068
+
+# RPC credentials — both must be set to enable daemon mode
+#rpcuser=alice
+#rpcpassword=changeme
+
+# How often (in seconds) the daemon syncs the wallet in the background
+# (default: 60)
+#sync_interval=60
