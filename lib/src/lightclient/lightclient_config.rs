@@ -199,7 +199,7 @@ impl<P: consensus::Parameters> LightClientConfig<P> {
             PathBuf::from(&self.data_dir.as_ref().unwrap()).into_boxed_path()
         } else {
             let mut zcash_data_location;
-            // If there's some --data-dir path provided, use it
+            // If there's some --data-dir path provided, use it as the base; otherwise use the default.
             if self.data_dir.is_some() {
                 zcash_data_location = PathBuf::from(&self.data_dir.as_ref().unwrap());
             } else {
@@ -213,14 +213,15 @@ impl<P: consensus::Parameters> LightClientConfig<P> {
                     zcash_data_location = dirs::home_dir().expect("Couldn't determine home directory!");
                     zcash_data_location.push(".zcash");
                 };
-
-                match &self.chain_name[..] {
-                    "zs" | "main" => {}
-                    "ztestsapling" | "test" => zcash_data_location.push("testnet3"),
-                    "zregtestsapling" | "regtest" => zcash_data_location.push("regtest"),
-                    c => panic!("Unknown chain {}", c),
-                };
             }
+
+            // Always append the network subdirectory so mainnet and testnet never share a data dir.
+            match &self.chain_name[..] {
+                "zs" | "main" => {}
+                "ztestsapling" | "test" => zcash_data_location.push("testnet3"),
+                "zregtestsapling" | "regtest" => zcash_data_location.push("regtest"),
+                c => panic!("Unknown chain {}", c),
+            };
 
             // Create directory if it doesn't exist on non-mobile platforms
             match std::fs::create_dir_all(zcash_data_location.clone()) {

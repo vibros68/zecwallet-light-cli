@@ -1229,6 +1229,36 @@ impl<P: consensus::Parameters + Send + Sync + 'static> Command<P> for NewAddress
     }
 }
 
+struct ListUnspentCommand {}
+
+impl<P: consensus::Parameters + Send + Sync + 'static> Command<P> for ListUnspentCommand {
+    fn help(&self) -> String {
+        let mut h = vec![];
+        h.push("List all unspent outputs across all pools");
+        h.push("Usage:");
+        h.push("listunspent");
+        h.push("");
+        h.push("Returns a JSON object with three keys:");
+        h.push("  transparent - unspent UTXOs (t-addresses)");
+        h.push("    fields: txid, output_index, address, value (zatoshis), created_in_block, datetime, scriptkey");
+        h.push("  sapling     - unspent Sapling notes (z-addresses)");
+        h.push("    fields: txid, address, value (zatoshis), created_in_block, datetime, spendable, is_change");
+        h.push("  orchard     - unspent Orchard notes (unified addresses)");
+        h.push("    fields: txid, address, value (zatoshis), created_in_block, datetime, spendable, is_change");
+        h.join("\n")
+    }
+
+    fn short_help(&self) -> String {
+        "List all unspent outputs across transparent, sapling and orchard pools".to_string()
+    }
+
+    fn exec(&self, _args: &[&str], lightclient: &LightClient<P>) -> String {
+        RT.block_on(async move {
+            format!("{}", lightclient.do_list_unspent_utxos().await.pretty(2))
+        })
+    }
+}
+
 struct NotesCommand {}
 
 impl<P: consensus::Parameters + Send + Sync + 'static> Command<P> for NotesCommand {
@@ -1322,6 +1352,7 @@ pub fn get_commands<P: consensus::Parameters + Send + Sync + 'static>() -> Box<H
     map.insert("quit".to_string(), Box::new(QuitCommand {}));
     map.insert("list".to_string(), Box::new(TransactionsCommand {}));
     map.insert("notes".to_string(), Box::new(NotesCommand {}));
+    map.insert("listunspent".to_string(), Box::new(ListUnspentCommand {}));
     map.insert("new".to_string(), Box::new(NewAddressCommand {}));
     map.insert("defaultfee".to_string(), Box::new(DefaultFeeCommand {}));
     map.insert("seed".to_string(), Box::new(SeedCommand {}));

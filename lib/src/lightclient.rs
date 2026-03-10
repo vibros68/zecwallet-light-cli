@@ -653,6 +653,95 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightClient<P> {
         })
     }
 
+    // Return all unspent outputs across all pools (transparent, sapling, orchard)
+    pub async fn do_list_unspent_utxos(&self) -> JsonValue {
+        let anchor_height = BlockHeight::from_u32(self.wallet.get_anchor_height().await);
+
+        // Transparent UTXOs
+        let transparent: Vec<JsonValue> = self.wallet.txns.read().await.current.iter()
+            .flat_map(|(txid, wtx)| {
+                wtx.utxos.iter().filter_map(move |utxo| {
+                    if utxo.spent.is_some() || utxo.unconfirmed_spent.is_some() {
+                        return None;
+                    }
+                    let created_block: u32 = wtx.block.into();
+                    Some(object! {
+                        "txid"             => format!("{}", txid),
+                        "output_index"     => utxo.output_index,
+                        "address"          => utxo.address.clone(),
+                        "value"            => utxo.value,
+                        "created_in_block" => created_block,
+                        "datetime"         => wtx.datetime,
+                        "scriptkey"        => hex::encode(utxo.script.clone()),
+                    })
+                })
+            })
+            .collect();
+
+        // Sapling notes
+        let spendable_zaddrs: HashSet<String> = self.wallet.keys().read().await
+            .get_all_spendable_zaddresses().into_iter().collect();
+
+        let sapling: Vec<JsonValue> = self.wallet.txns.read().await.current.iter()
+            .flat_map(|(txid, wtx)| {
+                let spendable_zaddrs = spendable_zaddrs.clone();
+                wtx.s_notes.iter().filter_map(move |nd| {
+                    if nd.spent.is_some() || nd.unconfirmed_spent.is_some() {
+                        return None;
+                    }
+                    let address = LightWallet::<P>::sapling_note_address(self.config.hrp_sapling_address(), nd);
+                    let spendable = address.is_some()
+                        && spendable_zaddrs.contains(address.as_ref().unwrap())
+                        && wtx.block <= anchor_height;
+                    let created_block: u32 = wtx.block.into();
+                    Some(object! {
+                        "txid"             => format!("{}", txid),
+                        "address"          => address,
+                        "value"            => nd.note.value,
+                        "created_in_block" => created_block,
+                        "datetime"         => wtx.datetime,
+                        "spendable"        => spendable,
+                        "is_change"        => nd.is_change,
+                    })
+                })
+            })
+            .collect();
+
+        // Orchard notes
+        let spendable_oaddrs: HashSet<String> = self.wallet.keys().read().await
+            .get_all_spendable_oaddresses().into_iter().collect();
+
+        let orchard: Vec<JsonValue> = self.wallet.txns.read().await.current.iter()
+            .flat_map(|(txid, wtx)| {
+                let spendable_oaddrs = spendable_oaddrs.clone();
+                wtx.o_notes.iter().filter_map(move |nd| {
+                    if nd.spent.is_some() || nd.unconfirmed_spent.is_some() {
+                        return None;
+                    }
+                    let address = LightWallet::<P>::orchard_ua_address(&self.config, &nd.note.recipient());
+                    let spendable = spendable_oaddrs.contains(&address)
+                        && wtx.block <= anchor_height;
+                    let created_block: u32 = wtx.block.into();
+                    Some(object! {
+                        "txid"             => format!("{}", txid),
+                        "address"          => address,
+                        "value"            => nd.note.value().inner(),
+                        "created_in_block" => created_block,
+                        "datetime"         => wtx.datetime,
+                        "spendable"        => spendable,
+                        "is_change"        => nd.is_change,
+                    })
+                })
+            })
+            .collect();
+
+        object! {
+            "transparent" => transparent,
+            "sapling"     => sapling,
+            "orchard"     => orchard,
+        }
+    }
+
     // Return a list of all notes, spent and unspent
     pub async fn do_list_notes(&self, all_notes: bool) -> JsonValue {
         let mut unspent_notes: Vec<JsonValue> = vec![];
