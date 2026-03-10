@@ -47,6 +47,8 @@ impl Parameters for UnitTestNetwork {
             NetworkUpgrade::Heartwood => Some(BlockHeight::from(1)),
             NetworkUpgrade::Canopy => Some(BlockHeight::from(1)),
             NetworkUpgrade::Nu5 => Some(BlockHeight::from(1)),
+            NetworkUpgrade::Nu6 => Some(BlockHeight::from(1)),
+            NetworkUpgrade::Nu6_1 => Some(BlockHeight::from(1)),
             #[cfg(feature = "zfuture")]
             NetworkUpgrade::ZFuture => None,
         }

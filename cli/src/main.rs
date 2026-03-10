@@ -4,7 +4,7 @@ use zecwallet_cli::{
 };
 use zecwalletlitelib::{
     lightclient::{self, lightclient_config::LightClientConfig},
-    MainNetwork,
+    MainNetwork, TestNetwork,
 };
 
 pub fn main() {
@@ -61,8 +61,13 @@ pub fn main() {
     }
 
     let nosync = matches.is_present("nosync");
+    let testnet = matches.is_present("testnet");
 
-    let startup_chan = startup(server, seed, birthday, maybe_data_dir ,!nosync, command.is_none());
+    let startup_chan = if testnet {
+        startup(TestNetwork, server, seed, birthday, maybe_data_dir, !nosync, command.is_none())
+    } else {
+        startup(MainNetwork, server, seed, birthday, maybe_data_dir, !nosync, command.is_none())
+    };
     let (command_tx, resp_rx) = match startup_chan {
         Ok(c) => c,
         Err(e) => {

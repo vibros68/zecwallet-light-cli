@@ -59,7 +59,7 @@ use zcash_primitives::{
     memo::Memo,
     transaction::{
         builder::Builder,
-        components::{amount::DEFAULT_FEE, OutPoint, TxOut},
+        components::{OutPoint, TxOut},
     },
     zip32::ExtendedFullViewingKey,
 };
@@ -1407,7 +1407,19 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
         // Select notes to cover the target value
         println!("{}: Selecting notes", now() - start_time);
 
-        let target_amount = (Amount::from_u64(total_value).unwrap() + DEFAULT_FEE).unwrap();
+        // ZIP-317 fee: 5000 zatoshis per logical action, minimum 2 actions.
+        // Estimate before note selection using known outputs + 2 assumed inputs.
+        const ZIP317_MARGINAL_FEE: u64 = 5000;
+        const ZIP317_GRACE_ACTIONS: u64 = 2;
+
+        let estimated_t_outputs = recepients.iter().filter(|(to, _, _)| matches!(to, address::RecipientAddress::Transparent(_))).count() as u64;
+        let estimated_s_outputs = recepients.iter().filter(|(to, _, _)| matches!(to, address::RecipientAddress::Shielded(_))).count() as u64;
+        let estimated_o_outputs = recepients.iter().filter(|(to, _, _)| matches!(to, address::RecipientAddress::Unified(_))).count() as u64;
+        // +1 for change output, +2 assumed inputs
+        let estimated_actions = estimated_t_outputs + estimated_s_outputs + estimated_o_outputs + 1 + 2;
+        let estimated_fee = ZIP317_MARGINAL_FEE * estimated_actions.max(ZIP317_GRACE_ACTIONS);
+
+        let target_amount = (Amount::from_u64(total_value).unwrap() + Amount::from_u64(estimated_fee).unwrap()).unwrap();
         let target_height = match self.get_target_height().await {
             Some(h) => BlockHeight::from_u32(h),
             None => return Err("No blocks in wallet to target, please sync first".to_string()),
@@ -1526,14 +1538,14 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
 
         let mut total_z_recepients = 0u32;
         let mut total_o_recepients = 0u32;
-        for (to, value, memo) in recepients {
+        for (to, value, memo) in &recepients {
             // Compute memo if it exists
             let encoded_memo = match memo {
                 None => MemoBytes::empty(),
                 Some(s) => {
                     // If the string starts with an "0x", and contains only hex chars ([a-f0-9]+) then
                     // interpret it as a hex
-                    match utils::interpret_memo_string(s) {
+                    match utils::interpret_memo_string(s.to_string()) {
                         Ok(m) => m,
                         Err(e) => {
                             error!("{}", e);
@@ -1550,18 +1562,18 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
                     // TODO(orchard): Allow using the sapling or transparent parts of this unified address too.
                     let orchard_address = to.orchard().unwrap().clone();
                     total_o_recepients += 1;
-                    change -= u64::from(value);
+                    change -= u64::from(*value);
 
-                    builder.add_orchard_output(Some(o_ovk.clone()), orchard_address, value.into(), encoded_memo)
+                    builder.add_orchard_output(Some(o_ovk.clone()), orchard_address, (*value).into(), encoded_memo)
                 }
                 address::RecipientAddress::Shielded(to) => {
                     total_z_recepients += 1;
-                    change -= u64::from(value);
-                    builder.add_sapling_output(Some(s_ovk), to.clone(), value, encoded_memo)
+                    change -= u64::from(*value);
+                    builder.add_sapling_output(Some(s_ovk), to.clone(), *value, encoded_memo)
                 }
                 address::RecipientAddress::Transparent(to) => {
-                    change -= u64::from(value);
-                    builder.add_transparent_output(&to, value)
+                    change -= u64::from(*value);
+                    builder.add_transparent_output(&to, *value)
                 }
             } {
                 let e = format!("Error adding output: {:?}", e);
@@ -1571,9 +1583,23 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
         }
 
         // Change
+        // Calculate the actual ZIP-317 fee now that we know the real number of inputs.
+        let actual_t_outputs = recepients.iter().filter(|(to, _, _)| matches!(to, address::RecipientAddress::Transparent(_))).count() as u64;
+        let actual_s_outputs = recepients.iter().filter(|(to, _, _)| matches!(to, address::RecipientAddress::Shielded(_))).count() as u64;
+        let actual_o_outputs = recepients.iter().filter(|(to, _, _)| matches!(to, address::RecipientAddress::Unified(_))).count() as u64;
+        let actual_t_inputs = utxos.len() as u64;
+        let actual_s_spends = s_notes.len() as u64;
+        let actual_o_actions = o_notes.len() as u64;
+        // +1 for change output (conservative: assume there is one)
+        let actual_actions = actual_t_inputs + actual_t_outputs + actual_s_spends + actual_s_outputs + actual_o_actions + actual_o_outputs + 1;
+        let zip317_fee = ZIP317_MARGINAL_FEE * actual_actions.max(ZIP317_GRACE_ACTIONS);
+
+        println!("ValueBalance: {}", change);
+        println!("fee: {}", zip317_fee);
+
         // If we're sending only to orchard addresses (or orchard + transparent addresses) send the change to
         // our orchard address.
-        change -= u64::from(DEFAULT_FEE);
+        change -= zip317_fee;
         if change > 0 {
             // Send the change to orchard if there are no sapling outputs and at least one orchard note
             // was selected. This means for t->t transactions, change will go to sapling.
@@ -1623,6 +1649,8 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
             p.progress = 0;
             p.total = s_notes.len() as u32 + total_z_recepients + total_o_recepients;
         }
+
+        builder.set_custom_fee(Amount::from_u64(zip317_fee).unwrap());
 
         println!("{}: Building transaction", now() - start_time);
         let (tx, _) = match builder.build(&prover) {

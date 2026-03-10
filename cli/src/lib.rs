@@ -6,7 +6,7 @@ use log::{error, info};
 
 use zecwalletlitelib::lightclient::lightclient_config::LightClientConfig;
 use zecwalletlitelib::{commands, lightclient::LightClient};
-use zecwalletlitelib::{MainNetwork, Parameters};
+use zecwalletlitelib::{MainNetwork, TestNetwork, Parameters};
 
 pub mod version;
 
@@ -45,6 +45,10 @@ macro_rules! configure_clapapp {
                 .takes_value(true)
                 .default_value(lightclient::lightclient_config::DEFAULT_SERVER)
                 .takes_value(true))
+            .arg(Arg::with_name("testnet")
+                .long("testnet")
+                .help("Connect to testnet instead of mainnet")
+                .takes_value(false))
             .arg(Arg::with_name("data-dir")
                 .long("data-dir")
                 .value_name("data-dir")
@@ -76,7 +80,8 @@ pub fn report_permission_error() {
     }
 }
 
-pub fn startup(
+pub fn startup<P: Parameters + Send + Sync + std::fmt::Debug + 'static>(
+    params: P,
     server: http::Uri,
     seed: Option<String>,
     birthday: u64,
@@ -85,7 +90,7 @@ pub fn startup(
     print_updates: bool,
 ) -> io::Result<(Sender<(String, Vec<String>)>, Receiver<String>)> {
     // Try to get the configuration
-    let (config, latest_block_height) = LightClientConfig::create(MainNetwork, server.clone(), data_dir)?;
+    let (config, latest_block_height) = LightClientConfig::create(params, server.clone(), data_dir)?;
     
     let lightclient = match seed {
         Some(phrase) => Arc::new(LightClient::new_from_phrase(phrase, &config, birthday, false)?),
