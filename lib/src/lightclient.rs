@@ -1105,6 +1105,101 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightClient<P> {
         JsonValue::Array(tx_list)
     }
 
+    /// Return detailed info for a single transaction by txid string.
+    pub async fn do_get_transaction(&self, txid_str: &str) -> JsonValue {
+        let current_height = self.wallet.last_scanned_height().await;
+
+        let txns = self.wallet.txns.read().await;
+        let (txid, wtx) = match txns.current.iter().find(|(k, _)| format!("{}", k) == txid_str) {
+            Some(t) => t,
+            None => return object! { "error" => format!("Transaction {} not found in wallet", txid_str) },
+        };
+
+        let block_height: u32 = wtx.block.into();
+        let confirmations: i64 = if wtx.unconfirmed {
+            0
+        } else {
+            current_height as i64 - block_height as i64 + 1
+        };
+
+        // Inputs: total value spent per pool
+        let inputs = object! {
+            "transparent_value_spent" => wtx.total_transparent_value_spent,
+            "sapling_value_spent"     => wtx.total_sapling_value_spent,
+            "orchard_value_spent"     => wtx.total_orchard_value_spent,
+            "total_value_spent"       => wtx.total_transparent_value_spent
+                                         + wtx.total_sapling_value_spent
+                                         + wtx.total_orchard_value_spent,
+        };
+
+        // Outputs: outgoing sends recorded in metadata
+        let outgoing: Vec<JsonValue> = wtx.outgoing_metadata.iter().map(|om| {
+            let memo_str = LightWallet::<P>::memo_str(Some(om.memo.clone()));
+            object! {
+                "address" => om.address.clone(),
+                "value"   => om.value,
+                "memo"    => memo_str,
+            }
+        }).collect();
+
+        // Fee: only meaningful when this wallet spent funds
+        let fee = if wtx.total_funds_spent() > 0 {
+            let total_change = wtx.s_notes.iter().filter(|nd| nd.is_change).map(|nd| nd.note.value).sum::<u64>()
+                + wtx.o_notes.iter().filter(|nd| nd.is_change).map(|nd| nd.note.value().inner()).sum::<u64>()
+                + wtx.utxos.iter().map(|ut| ut.value).sum::<u64>();
+            let outgoing_total: u64 = wtx.outgoing_metadata.iter().map(|om| om.value).sum();
+            Some(wtx.total_funds_spent().saturating_sub(outgoing_total + total_change))
+        } else {
+            None
+        };
+
+        // Outputs: transparent UTXOs received by this wallet
+        let received_transparent: Vec<JsonValue> = wtx.utxos.iter().map(|u| {
+            object! {
+                "address"      => u.address.clone(),
+                "value"        => u.value,
+                "output_index" => u.output_index,
+                "scriptkey"    => hex::encode(u.script.clone()),
+            }
+        }).collect();
+
+        // Outputs: sapling notes received by this wallet
+        let received_sapling: Vec<JsonValue> = wtx.s_notes.iter().map(|nd| {
+            object! {
+                "address"   => LightWallet::<P>::sapling_note_address(self.config.hrp_sapling_address(), nd),
+                "value"     => nd.note.value,
+                "memo"      => LightWallet::<P>::memo_str(nd.memo.clone()),
+                "is_change" => nd.is_change,
+            }
+        }).collect();
+
+        // Outputs: orchard notes received by this wallet
+        let received_orchard: Vec<JsonValue> = wtx.o_notes.iter().map(|nd| {
+            object! {
+                "address"   => LightWallet::<P>::orchard_ua_address(&self.config, &nd.note.recipient()),
+                "value"     => nd.note.value().inner(),
+                "is_change" => nd.is_change,
+            }
+        }).collect();
+
+        object! {
+            "txid"          => format!("{}", txid),
+            "block_height"  => block_height,
+            "confirmations" => confirmations,
+            "unconfirmed"   => wtx.unconfirmed,
+            "datetime"      => wtx.datetime,
+            "zec_price"     => wtx.zec_price.map(|p| (p * 100.0).round() / 100.0),
+            "fee"           => fee,
+            "inputs"        => inputs,
+            "outputs"       => object! {
+                "outgoing"             => outgoing,
+                "received_transparent" => received_transparent,
+                "received_sapling"     => received_sapling,
+                "received_orchard"     => received_orchard,
+            },
+        }
+    }
+
     /// Create a new address, deriving it from the seed.
     pub async fn do_new_address(&self, addr_type: &str) -> Result<JsonValue, String> {
         if !self.wallet.is_unlocked_for_spending().await {
