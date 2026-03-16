@@ -1347,6 +1347,49 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
         }
     }
 
+    pub async fn calculate_fee(&self, tos: Vec<(&str, u64)>) -> Result<(u64, u64, u64, u64, u64, u64, u64, u64), String> {
+        if tos.is_empty() {
+            return Err("Need at least one destination address".to_string());
+        }
+
+        let total_value: u64 = tos.iter().map(|to| to.1).sum();
+
+        let recipients = tos
+            .iter()
+            .map(|to| match address::RecipientAddress::decode(&self.config.get_params(), to.0) {
+                Some(ra) => Ok(ra),
+                None => Err(format!("Invalid recipient address: '{}'", to.0)),
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        const ZIP317_MARGINAL_FEE: u64 = 5000;
+        const ZIP317_GRACE_ACTIONS: u64 = 2;
+
+        let t_outputs = recipients.iter().filter(|ra| matches!(ra, address::RecipientAddress::Transparent(_))).count() as u64;
+        let s_outputs = recipients.iter().filter(|ra| matches!(ra, address::RecipientAddress::Shielded(_))).count() as u64;
+        let o_outputs = recipients.iter().filter(|ra| matches!(ra, address::RecipientAddress::Unified(_))).count() as u64;
+
+        // +1 for change output, +2 assumed inputs
+        let estimated_actions = t_outputs + s_outputs + o_outputs + 1 + 2;
+        let estimated_fee = ZIP317_MARGINAL_FEE * estimated_actions.max(ZIP317_GRACE_ACTIONS);
+
+        let target_amount = (Amount::from_u64(total_value).unwrap() + Amount::from_u64(estimated_fee).unwrap()).unwrap();
+
+        let prefer_orchard = s_outputs == 0;
+        let (o_notes, s_notes, utxos, _selected) =
+            self.select_notes_and_utxos(target_amount, false, prefer_orchard).await;
+
+        let t_inputs = utxos.len() as u64;
+        let s_spends = s_notes.len() as u64;
+        let o_actions = o_notes.len() as u64;
+
+        // +1 for change output (conservative)
+        let actual_actions = t_inputs + t_outputs + s_spends + s_outputs + o_actions + o_outputs + 1;
+        let fee = ZIP317_MARGINAL_FEE * actual_actions.max(ZIP317_GRACE_ACTIONS);
+
+        Ok((fee, actual_actions, t_inputs, s_spends, o_actions, t_outputs, s_outputs, o_outputs))
+    }
+
     async fn send_to_address_internal<F, Fut, PR: TxProver>(
         &self,
         prover: PR,

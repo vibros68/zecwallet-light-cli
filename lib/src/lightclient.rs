@@ -1881,6 +1881,24 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightClient<P> {
         result.map(|(txid, _)| txid)
     }
 
+    pub async fn do_calculate_fee(&self, addrs: Vec<(&str, u64)>) -> JsonValue {
+        match self.wallet.calculate_fee(addrs).await {
+            Ok((fee, actions, t_inputs, s_spends, o_inputs, t_outputs, s_outputs, o_outputs)) => {
+                object! {
+                    "fee"       => fee,
+                    "actions"   => actions,
+                    "t_inputs"  => t_inputs,
+                    "s_spends"  => s_spends,
+                    "o_inputs"  => o_inputs,
+                    "t_outputs" => t_outputs,
+                    "s_outputs" => s_outputs,
+                    "o_outputs" => o_outputs,
+                }
+            }
+            Err(e) => object! { "error" => e },
+        }
+    }
+
     pub async fn do_send(&self, addrs: Vec<(&str, u64, Option<String>)>) -> Result<String, String> {
         info!("Creating transaction");
 

@@ -1331,6 +1331,57 @@ impl<P: consensus::Parameters + Send + Sync + 'static> Command<P> for NotesComma
     }
 }
 
+struct CalculateFeeCommand {}
+
+impl<P: consensus::Parameters + Send + Sync + 'static> Command<P> for CalculateFeeCommand {
+    fn help(&self) -> String {
+        let mut h = vec![];
+        h.push("Calculate the ZIP-317 fee for a transaction without sending it");
+        h.push("Usage:");
+        h.push("calculatefee '{\"<address>\": <amount in zatoshis>, ...}'");
+        h.push("");
+        h.push("The JSON object maps each recipient address to the amount (in zatoshis) they should receive.");
+        h.push("Returns the estimated fee and a breakdown of inputs/outputs by pool.");
+        h.push("");
+        h.push("Example:");
+        h.push("calculatefee '{\"ztestsapling1...\": 100000, \"t1abc...\": 50000}'");
+        h.join("\n")
+    }
+
+    fn short_help(&self) -> String {
+        "Calculate the transaction fee for given recipients without sending".to_string()
+    }
+
+    fn exec(&self, args: &[&str], lightclient: &LightClient<P>) -> String {
+        if args.len() != 1 {
+            return Command::<P>::help(self);
+        }
+
+        let json_args = match json::parse(args[0]) {
+            Ok(j) => j,
+            Err(e) => return format!("Couldn't parse JSON: {}\n{}", e, Command::<P>::help(self)),
+        };
+
+        if !json_args.is_object() {
+            return format!("Argument must be a JSON object {{address: amount, ...}}\n{}", Command::<P>::help(self));
+        }
+
+        let mut addrs: Vec<(String, u64)> = vec![];
+        for (addr, val) in json_args.entries() {
+            let amount = match val.as_u64() {
+                Some(v) => v,
+                None => return format!("Invalid amount for address '{}': expected integer zatoshis", addr),
+            };
+            addrs.push((addr.to_string(), amount));
+        }
+
+        RT.block_on(async move {
+            let refs: Vec<(&str, u64)> = addrs.iter().map(|(a, v)| (a.as_str(), *v)).collect();
+            format!("{}", lightclient.do_calculate_fee(refs).await.pretty(2))
+        })
+    }
+}
+
 struct QuitCommand {}
 
 impl<P: consensus::Parameters + Send + Sync + 'static> Command<P> for QuitCommand {
@@ -1389,6 +1440,7 @@ pub fn get_commands<P: consensus::Parameters + Send + Sync + 'static>() -> Box<H
     map.insert("gettx".to_string(), Box::new(GetTransactionCommand {}));
     map.insert("new".to_string(), Box::new(NewAddressCommand {}));
     map.insert("defaultfee".to_string(), Box::new(DefaultFeeCommand {}));
+    map.insert("calculatefee".to_string(), Box::new(CalculateFeeCommand {}));
     map.insert("seed".to_string(), Box::new(SeedCommand {}));
     map.insert("encrypt".to_string(), Box::new(EncryptCommand {}));
     map.insert("decrypt".to_string(), Box::new(DecryptCommand {}));
